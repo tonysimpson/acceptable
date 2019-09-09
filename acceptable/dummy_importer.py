@@ -5,11 +5,8 @@ from future import standard_library
 
 standard_library.install_aliases()
 import sys
-try:
-    # install_aliases() doesn't seem to include unittest.mock
-    from mock import MagicMock
-except ImportError:
-    from unittest.mock import MagicMock
+from mock import MagicMock
+from importlib import import_module
 
 
 class DummyFinder(object):
@@ -22,28 +19,21 @@ class DummyFinder(object):
     allowed_real_modules is a list of module names to not mock instead the
     module finders are tried.
 
-    finders can come from sys.meta_path
-
-    modules in passthrough will raise the correct error on import if
+    modules in allowed_real_modules will raise the correct error on import if
     they can't be loaded.
 
     This class is used by DummyImporterContext which patches sys.modules
     and sys.meta_path.
     """
 
-    def __init__(self, allowed_real_modules, finders):
-        self.finders = finders
+    def __init__(self, allowed_real_modules):
         self.allowed = set(allowed_real_modules)
 
     def find_module(self, fullname, path=None):
         if fullname in self.allowed:
-            for finder in self.finders:
-                loader = finder.find_module(fullname, path)
-                if loader is not None:
-                    return loader
-            else:
-                return None
-        return self
+            return None
+        else:
+            return self
 
     def load_module(self, fullname):
         try:
@@ -52,11 +42,13 @@ class DummyFinder(object):
             pass
         mod = MagicMock()
         sys.modules[fullname] = mod
-        mod.__file__ = "<DummyFinder>"
+        mod.__name__ = fullname
+        mod.__file__ = "<Dummy>"
         mod.__loader__ = self
-        mod.__path__ = []
-        mod.__package__ = fullname
-        mod.__doc__ = "DummyImporterContext dummy"
+        if "." not in fullname:
+            mod.__path__ = [fullname]
+        mod.__package__ = None
+        mod.__doc__ = "Dummy"
         return mod
 
 
@@ -76,12 +68,11 @@ class DummyImporterContext(object):
         self.allowed_real_modules = set(allowed_real_modules)
 
     def __enter__(self):
-        self.orig_sys_meta_path = sys.meta_path
         self.orig_sys_modules = sys.modules
-        self.finder = DummyFinder(self.allowed_real_modules, self.orig_sys_meta_path)
+        self.finder = DummyFinder(self.allowed_real_modules)
         sys.modules = dict(sys.modules)
-        sys.meta_path = [self.finder]
+        sys.meta_path.insert(0, self.finder)
 
     def __exit__(self, *args):
-        sys.meta_path = self.orig_sys_meta_path
+        sys.meta_path.remove(self.finder)
         sys.modules = self.orig_sys_modules

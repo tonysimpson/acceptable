@@ -216,73 +216,105 @@ def metadata_cmd(cli_args):
     cli_args.output.write(json.dumps(current, indent=2))
 
 
-def add_working_dir_to_python_path():
-    cwd = os.getcwd()
-    if cwd not in sys.path:
-        sys.path.insert(0, cwd)
+def add_paths_to_python_path(paths):
+    sys.path = list(paths) + sys.path
 
 
-def import_or_exec(path):
-    """If path exists and ends in .py it is exec'd otherwise
-    import is attempted"""
-    if os.path.exists(path) and path.endswith('.py'):
-        try:
-            exec(open(path).read(), {}, {})
-        except:
-            raise Exception('Could not exec {!r}'.format(path))
+def find_path_and_module_full_name(filepath):
+    """Takes a file path to a python file and works out if it is part of a
+    package. It returns the director path the module can be imported from
+    and the dotted name of the module"""
+    filepath = os.path.abspath(filepath)
+    path, filename = os.path.split(filepath)
+    if filename == "__init__.py":
+        path, module = os.path.split(path)
     else:
-        try:
-            import_module(path)
-        except:
-            raise Exception(
-                '{!r} did not look like a filepath and could not be '
-                'loaded as a module'.format(path)
+        module, _ = os.path.splitext(filename)
+    module_parts = [module]
+    while path and os.path.exists(os.path.join(path, "__init__.py")):
+        path, module = os.path.split(path)
+        module_parts.append(module)
+    module_parts.reverse()
+    module_full_name = ".".join(module_parts)
+    return path, module_full_name
+
+
+def convert_all_to_modules(module_paths):
+    paths = [os.getcwd()]
+    modules = []
+    for module_path in module_paths:
+        if os.path.exists(module_path) and module_path.endswith(".py"):
+            path, module_full_name = find_path_and_module_full_name(
+                module_path
             )
+            paths.append(path)
+            modules.append(module_full_name)
+        else:
+            if "/" in module_path or "\\" in module_path:
+                raise Exception(
+                    "Can't import {}: It doesn't look like a module and can't"
+                    " be converted to one. Is the path correct?".format(
+                        module_path
+                    )
+                )
+            modules.append(module_path)
+    return list(set(paths)), modules
 
 
-def import_metadata_dummy_dependencies(module_paths):
+def import_metadata_dummy_dependencies(paths, modules):
     import acceptable._service
-    add_working_dir_to_python_path()
-    for path in module_paths:
-        with DummyImporterContext(path):
-            import_or_exec(path)
+
+    add_paths_to_python_path(paths)
+    # Include parent modules in allowed modules
+    # TODO: Is this necessary, I couldn't get it working with mock
+    #       parents.
+    allowed_modules = list(modules)
+    for module in modules:
+        while "." in module:
+            module = module.rsplit(".", 1)[0]
+            allowed_modules.append(module)
+    for module in modules:
+        with DummyImporterContext(*allowed_modules):
+            import_module(module)
 
 
-def import_metadata_real_dependencies(module_paths):
-    add_working_dir_to_python_path()
-    for path in module_paths:
-        import_or_exec(path)
+def import_metadata_real_dependencies(paths, modules):
+    add_paths_to_python_path(paths)
+    for module in modules:
+        import_module(module)
 
 
 def import_metadata(module_paths, dummy_dependencies=False):
-    """Imports modules or execs filepaths in order
-    to get acceptable decorator metadata.
+    """Imports modules or filepaths in order to get acceptable decorator
+    metadata.
     """
+    paths, modules = convert_all_to_modules(module_paths)
     if dummy_dependencies:
-        import_metadata_dummy_dependencies(module_paths)
+        import_metadata_dummy_dependencies(paths, modules)
     else:
-        import_metadata_real_dependencies(module_paths)
+        import_metadata_real_dependencies(paths, modules)
 
 
 def load_metadata(stream):
     """Load JSON metadata from opened stream."""
     try:
         metadata = json.load(
-            stream, encoding='utf8', object_pairs_hook=OrderedDict)
+            stream, encoding="utf8", object_pairs_hook=OrderedDict
+        )
     except json.JSONDecodeError as e:
-        err = RuntimeError('Error parsing {}: {}'.format(stream.name, e))
+        err = RuntimeError("Error parsing {}: {}".format(stream.name, e))
         raise_from(err, e)
     else:
         # convert changelog keys back to ints for sorting
         for group in metadata:
-            if group == '$version':
+            if group == "$version":
                 continue
-            apis = metadata[group]['apis']
+            apis = metadata[group]["apis"]
             for api in apis.values():
                 int_changelog = OrderedDict()
-                for version, log in api.get('changelog', {}).items():
+                for version, log in api.get("changelog", {}).items():
                     int_changelog[int(version)] = log
-                api['changelog'] = int_changelog
+                api["changelog"] = int_changelog
     finally:
         stream.close()
 

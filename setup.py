@@ -21,6 +21,7 @@ setup(
     long_description=''.join(open('README.rst').readlines()[2:]),
     long_description_content_type='text/x-rst',
     install_requires=[
+        'mock',
         'future',
         'jinja2',
         'jsonschema',

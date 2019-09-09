@@ -268,6 +268,33 @@ class MetadataTests(testtools.TestCase):
             locations,
         )
 
+    def test_dummy_dependencies_from_path(self):
+        service = """
+            import zzzxxxyyy # does not exist
+            from acceptable import AcceptableService
+            service = AcceptableService('myservice', 'group')
+
+            root_api = service.api('/', 'root', introduced_at=1)
+            root_api.request_schema = {'type': 'object'}
+            root_api.response_schema = {'type': 'object'}
+            root_api.changelog(4, "changelog")
+
+            @root_api
+            def my_view():
+                "Documentation."
+        """
+        fixture = self.useFixture(TemporaryModuleFixture("service", service))
+        main.import_metadata([fixture.path], dummy_dependencies=True)
+        metadata, _ = get_metadata().serialize()
+        self.assertEqual(
+            "myservice", metadata["group"]["apis"]["root"]["service"]
+        )
+        # TemporaryModuleFixture assumes you can and do import the module
+        # TODO: fix this deceit?
+        import sys
+
+        sys.modules["service"] = None
+
 
 class LoadMetadataTests(testtools.TestCase):
 
